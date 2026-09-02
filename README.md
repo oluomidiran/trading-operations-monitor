@@ -1,370 +1,132 @@
 # Trading Operations Monitor
 
-A beginner-friendly Python project that simulates core trading operations workflows: trade lifecycle tracking, position aggregation, PnL calculation, reconciliation, exception reporting, market data checks, and CSV exports.
+**Trade lifecycle tracking, position reconciliation, PnL calculation, and exception reporting in Python**
 
-This project is designed for learning and portfolio use, especially for a Graduate Trading Operations Specialist application.
+A control framework for the daily verification work that sits between a trade being executed and a firm trusting its books. The system tracks trade status through the lifecycle, aggregates filled activity into positions, computes realized and unrealized PnL, reconciles calculated positions against an official record, monitors market-data health, and surfaces breaks as a severity-ranked exception report.
 
----
+**Synthetic data.** Trades, prices, and the official position file are generated programmatically with deliberate defects — quantity mismatches, cost-basis differences, a stale price, and an unavailable price. Nothing connects to a broker, exchange, or market-data vendor. The defects are intentional: a reconciliation process that never finds a break has not been tested.
 
-## What the Project Does
+## The operational problem
 
-The project generates fake trades across five instruments, calculates current positions, estimates realized and unrealized PnL, creates or loads an `official_positions.csv` file, compares calculated positions against that official record, checks market data health, and flags operational exceptions.
+A trade executing is not the same as a trade being correctly recorded. Between execution and a firm trusting its books sit a series of controls, and each one exists because it has failed somewhere before:
 
-It does not connect to real markets, brokers, or APIs. Everything is simulated with simple Python logic so the workflow is easy to understand and explain.
+| Control | The failure it catches |
+|---|---|
+| Trade lifecycle status | Cancelled trades leaking into booked positions |
+| Position aggregation | Filled activity not reflected in the position record |
+| Market-data health | Valuation computed from stale or missing prices |
+| Position reconciliation | Internal records diverging from the official book |
+| Exception management | Breaks discovered by month-end rather than the same day |
 
----
+Each module implements one of these checks. The dashboard brings them into a single operational view rather than leaving them as separate reports that have to be cross-referenced by hand.
 
-## Why This Project Matters for Trading Operations
+## Module design
 
-Trading operations teams help make sure trading activity is properly recorded, reconciled, and controlled.
+**`trades.py`** — Generates trade records carrying ID, timestamp, instrument, side, quantity, price, and lifecycle status. Only `filled` trades flow into positions. Pending and cancelled trades are deliberately excluded, which is what allows the system to detect a cancelled-trade leak downstream.
 
-This project simulates the kind of checks operations teams perform every day:
+**`prices.py`** — Produces current prices alongside a market-data health assessment classifying each instrument as healthy, stale, or unavailable. Valuation and unrealized PnL both depend on price quality, so the health check runs before, not after, the numbers that rely on it.
 
-- Did trades flow correctly?
-- Did filled trades update positions?
-- Are cancelled trades excluded from positions?
-- Do internal expected positions match the official record?
-- Are current prices available for PnL and valuation?
-- Are any prices missing, stale, or unavailable?
-- Which exceptions need investigation?
-- Are backend processes such as trade reporting, PnL recording, and reconciliation working as expected?
+**`positions.py`** — Aggregates filled trades into net quantity, average cost basis, current price, and market value per instrument. This is the booked position view that reconciliation compares against.
 
-The goal is not to build a real trading platform. The goal is to understand the operational control checks that help trading teams trust their data, reports, and systems.
+**`pnl.py`** — Separates realized PnL (closed activity) from unrealized PnL (open positions):
 
----
-
-## Project Structure
-
-```text
-Trading Operations Monitor Upgraded/
-- dashboard.py
-- trades.py
-- prices.py
-- positions.py
-- pnl.py
-- reconciliation.py
-- exceptions.py
-- official_positions.csv
-- README.md
-- requirements.txt
+```
+unrealized PnL = (current price − average cost basis) × net quantity
 ```
 
----
+Where price data is missing, the report marks the gap rather than substituting a stale value. A PnL figure that silently omits an instrument is more dangerous than one that flags the omission.
 
-## File-by-File Explanation
+**`reconciliation.py`** — Compares calculated positions against `official_positions.csv`, reporting quantity and average-cost differences per instrument. The official file contains seeded mismatches so the comparison logic is exercised rather than assumed.
 
-### `trades.py`
+**`exceptions.py`** — Converts detected issues into a severity-ranked report: position mismatch, cost-basis mismatch, missing price data, cancelled-trade leak, and pending trades not yet reflected. Each carries a severity level and an explanation of the downstream consequence, so triage order is explicit rather than left to the reader.
 
-Generates simulated trade records.
+**`dashboard.py`** — Terminal interface exposing the operational summary, individual reports, market-data health check, backend process verification, and CSV export.
 
-Each trade includes:
+## Reports
 
-- Trade ID
-- Timestamp
-- Instrument
-- Side: BUY or SELL
-- Quantity
-- Trade price
-- Status: filled, pending, or cancelled
+The dashboard exposes ten views, including an operational summary, per-instrument PnL, the reconciliation report, the exception report, and a backend process verification covering trade flow, PnL recording, and reconciliation completeness.
 
-Only filled trades affect positions. Pending and cancelled trades are left out of booked positions so the project can demonstrate operational timing and status control.
+Export writes five files: `trades_report.csv`, `positions_report.csv`, `pnl_report.csv`, `reconciliation_report.csv`, and `exceptions_report.csv`.
 
-**Trading operations concept:** trade lifecycle.
+## Sample output
 
-A trade may be filled, pending, or cancelled. Operations teams need to know which trades should affect positions and which should not.
-
----
-
-### `prices.py`
-
-Generates current market prices and a simple market data health report.
-
-The price set intentionally includes:
-
-- healthy prices
-- one stale price
-- one unavailable price
-
-This makes it possible to monitor pricing tool quality and detect gaps before they affect valuation and PnL.
-
-**Trading operations concept:** market data quality.
-
-Current prices are needed to calculate market value and unrealized PnL. Missing or stale prices can affect reporting, valuation, and risk visibility.
-
----
-
-### `positions.py`
-
-Aggregates filled trades into current positions.
-
-For each instrument, it calculates:
-
-- net quantity held
-- average cost basis
-- current price
-- current market value
-
-This is the booked position view used for reconciliation and valuation.
-
-**Trading operations concept:** position tracking.
-
-Operations teams need to know what the firm currently owns, owes, or is short after trade activity is processed.
-
----
-
-### `pnl.py`
-
-Calculates realized and unrealized PnL.
-
-- Realized PnL: profit or loss from closed trading activity
-- Unrealized PnL: profit or loss on positions still open
-
-If market data is missing, the report keeps that visible instead of pretending the unrealized PnL is fully complete.
-
-Formula used for unrealized PnL:
-
-```text
-unrealized PnL = (current price - average cost basis) x net quantity
 ```
-
-**Trading operations concept:** profit and loss reporting.
-
-PnL helps trading teams understand whether positions are gaining or losing money. Operations teams help make sure PnL is recorded from clean trade, position, and pricing data.
-
----
-
-### `reconciliation.py`
-
-Creates or loads `official_positions.csv` and compares it against calculated positions.
-
-The official file contains a few intentional mismatches so the reconciliation report can identify:
-
-- quantity mismatches
-- average cost mismatches
-
-This mirrors the kind of break investigation a trading operations team would do when different systems disagree.
-
-**Trading operations concept:** reconciliation.
-
-Reconciliation means comparing two records that should match and investigating any differences. In this project, calculated positions are compared against an official position file.
-
----
-
-### `exceptions.py`
-
-Builds a human-readable operational exception report.
-
-The report includes:
-
-- Position Mismatch
-- Cost Basis Mismatch
-- Missing Price Data
-- Cancelled Trade Leak
-- Pending Trade Not Reflected Yet
-
-Each exception includes a severity level and a short explanation of why it matters.
-
-**Trading operations concept:** exception management.
-
-An exception is anything that does not match expected behavior. Operations teams investigate exceptions before they become reporting, financial, or risk issues.
-
----
-
-### `dashboard.py`
-
-Runs the terminal dashboard and gives a simple menu to inspect reports.
-
-Reports available:
-
-1. Operational Summary
-2. Trades
-3. Current Positions
-4. PnL by Instrument
-5. Reconciliation Report
-6. Exception Report
-7. Current Market Prices
-8. Market Data Health Check
-9. Export Reports to CSV
-10. Backend Process Verification Summary
-
-The export option writes these files:
-
-- `trades_report.csv`
-- `positions_report.csv`
-- `pnl_report.csv`
-- `reconciliation_report.csv`
-- `exceptions_report.csv`
-
-**Trading operations concept:** operational reporting.
-
-A dashboard helps summarize the current state of trading activity, positions, PnL, market data health, reconciliation breaks, and exceptions.
-
----
-
-## How to Run the Project in Replit
-
-### 1. Open the Shell
-
-In Replit, open the `Shell` tab.
-
-### 2. Go to the Python app folder
-
-```bash
-cd ~/workspace/python-app
-```
-
-### 3. Go into the upgraded project folder
-
-```bash
-cd "Trading Operations Monitor Upgraded"
-```
-
-The quotation marks matter because the folder name has spaces.
-
-### 4. Install the required package
-
-```bash
-pip install -r requirements.txt
-```
-
-### 5. Run the dashboard
-
-```bash
-python dashboard.py
-```
-
-If `python` does not work, try:
-
-```bash
-python3 dashboard.py
-```
-
----
-
-## Example Output
-
-When the project runs, you should see a dashboard menu like this:
-
-```text
 ================================================================================
-TRADING OPERATIONS MONITOR - SUMMARY
+TRADING OPERATIONS MONITOR — SUMMARY
 ================================================================================
 Total trades generated:       60
 Filled trades:                42
 Pending trades:               11
-Cancelled trades:             7
-Current instruments tracked:  5
-Reconciliation mismatches:    3
+Cancelled trades:              7
+Instruments tracked:           5
+Reconciliation mismatches:     3
 Total exceptions detected:    10
-
-Choose a report to view:
-1. Operational Summary
-2. Trades
-3. Current Positions
-4. PnL by Instrument
-5. Reconciliation Report
-6. Exception Report
-7. Current Market Prices
-8. Market Data Health Check
-9. Export Reports to CSV
-10. Backend Process Verification Summary
-0. Exit
 ```
 
-Example reconciliation report:
+Reconciliation report:
 
-```text
-instrument  net_quantity  official_quantity  quantity_difference  reconciliation_status
-AAPL        365           440                75                   MISMATCHED
-MSFT        170           170                0                    MISMATCHED
-NVDA        -40           -40                0                    MATCHED
-SPY         35            35                 0                    MATCHED
-TSLA        150           125                -25                  MISMATCHED
+```
+instrument  net_quantity  official_quantity  difference  status
+AAPL                 365                440          75  MISMATCHED
+MSFT                 170                170           0  MATCHED
+NVDA                 -40                -40           0  MATCHED
+SPY                   35                 35           0  MATCHED
+TSLA                 150                125         -25  MISMATCHED
 ```
 
-Example exception report:
+Exception report:
 
-```text
-exception_type        instrument   severity   details
-Position Mismatch     AAPL         High       Calculated quantity does not match official quantity.
-Cost Basis Mismatch   MSFT         Medium     Calculated average cost differs from official average cost.
-Missing Price Data    TSLA         High       Current market price is unavailable.
+```
+exception_type        instrument  severity  detail
+Position Mismatch     AAPL        High      Calculated quantity differs from official record
+Cost Basis Mismatch   MSFT        Medium    Calculated average cost differs from official
+Missing Price Data    TSLA        High      Current market price unavailable for valuation
 ```
 
-The exact numbers may change depending on the simulated trades and generated data.
+Figures vary with each run, since trades and prices are generated fresh.
 
----
+## Running it
 
-## What the Dashboard Shows
+**macOS and Linux**
 
-The dashboard gives three strong trading operations views:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python dashboard.py
+```
 
-- an operational summary for a quick status check
-- a market data health check for pricing tool monitoring
-- a backend process verification summary for trade flow, PnL, reconciliation, and exception counts
+**Windows PowerShell**
 
-This keeps the project beginner-friendly while making it more aligned to day-to-day operations support work.
+```powershell
+python -m venv .venv
+# Only if PowerShell blocks activation; applies to this session only:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python dashboard.py
+```
 
----
+## Design decisions
 
-## Skills Demonstrated
+**Separation by control, not by convenience.** Each module owns one operational check. Reconciliation does not compute PnL; PnL does not assess price quality. A break in one control is therefore traceable to one file.
 
-This project demonstrates:
+**Failures are seeded deliberately.** The official position file and the price set both contain planted defects. Reconciliation and exception logic that only ever runs against clean data proves nothing.
 
-- Python fundamentals
-- modular code structure
-- data generation
-- data aggregation
-- position tracking
-- PnL calculation
-- reconciliation logic
-- exception reporting
-- market data health checks
-- CSV report exports
-- beginner-friendly terminal dashboard design
-- understanding of trading operations workflows
-- ability to build and improve a practical tool with Python
+**Missing data is reported, not imputed.** Where a price is unavailable, unrealized PnL is marked incomplete rather than computed from a stale value. Silent substitution is how a reporting gap becomes a valuation error.
 
----
+**Severity is assigned at detection.** Exceptions carry a severity level so triage order is explicit. An unavailable price affecting valuation is not equivalent to a pending trade awaiting settlement.
 
-## Why This Project Aligns With Trading Operations at IMC
+## Limitations
 
-This project aligns well with a Graduate Trading Operations Specialist application because it shows the kind of control-minded thinking the role requires.
+Trades, prices, and the official position file are all generated rather than sourced from real systems, so the system demonstrates control logic rather than integration with a trading platform.
 
-- Pricing tool monitoring: the project checks whether market prices are healthy, stale, or unavailable.
-- Trade reporting: the dashboard tracks trade counts and separates filled, pending, and cancelled activity.
-- PnL recording: realized and unrealized PnL are calculated and summarized in the backend verification view.
-- Reconciliation: calculated positions are compared against an official position file with intentional breaks.
-- Exception management: mismatches and data issues are turned into clear operational exceptions with severity levels.
-- Market data quality: missing or stale prices are identified before they silently affect valuation.
-- Operational stability: the project brings trade flow, positions, pricing, reconciliation, and exceptions into one monitor instead of treating them separately.
+Cost-basis handling uses a simplified average-cost method and does not model FIFO or LIFO inventory conventions, partial closes across differing cost lots, or corporate actions.
 
-It also shows Python as a practical advantage. The code is modular, readable, and simple enough to explain clearly in an interview without pretending to be a full production trading system.
+There is no settlement modelling, no multi-currency handling, no fee or commission accounting, and no intraday versus end-of-day distinction.
 
----
+Reconciliation and exception logic are not yet covered by unit tests. Given that both are pure functions over structured inputs, they are the natural first candidates.
 
-## How to Explain This in an Interview
+## Planned work
 
-You can say:
-
-> I built a Python-based Trading Operations Monitor to simulate the control checks a trading operations team performs. The project tracks trade lifecycle status, aggregates filled trades into positions, records realized and unrealized PnL, checks pricing tool health, reconciles calculated positions against an official position file, and highlights exceptions that would need investigation. I kept it simple on purpose so the logic is easy to explain, but the workflow still reflects real operational responsibilities.
-
-A simpler version:
-
-> I built this to understand how trading operations teams verify trade flow, positions, PnL, market data quality, and reconciliation breaks. Each file represents one part of the workflow, and the dashboard brings the reports together in one place.
-
----
-
-## What I Would Improve Next
-
-If I had more time, I would improve the project in a few practical ways:
-
-- add unit tests around reconciliation and exception logic
-- add date filters for intraday versus end-of-day monitoring
-- add a simple trade reporting completeness check across more backend steps
-- add a small log file for audit history of exported reports
-- improve cost basis logic to handle more realistic inventory edge cases
-- add a simple risk exposure report
-- add a Streamlit or web dashboard later
-
-I would keep the project honest and focused. The goal is not to pretend this is a production trading platform. The goal is to show clear understanding of trading operations controls, data quality, reconciliation, and Python-based reporting.
+Unit tests over reconciliation and exception logic, since both are deterministic and testable in isolation. Intraday versus end-of-day filtering. A more realistic cost-basis engine handling partial closes across cost lots. An audit log recording report generation history. A simple exposure report by instrument and direction.
